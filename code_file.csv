@@ -1,0 +1,108 @@
+#include <DHT.h>
+#include <Adafruit_Sensor.h>
+#include <DHT_U.h>
+#include <SPI.h>
+#include <SdFat.h>
+#include <ArduinoJson.h>
+#include <WiFiNINA.h>
+
+#define DHTPIN 2  
+#define DHTTYPE DHT22
+
+
+char ssid[] = "";
+char pass[] = "";
+
+
+char plotlyUsername[] = "";
+char plotlyApiKey[] = "";
+char plotlyHost[] = "https://api.plot.ly/v2/";
+
+// Create a DHT instance
+DHT_Unified dht(DHTPIN, DHTTYPE);
+
+// Initialize SD card
+SdFat sd;
+const char* fileName = "data.txt";
+
+// Replace with your Plotly streaming token (get it from Plotly website)
+char plotlyToken[] = "YourPlotlyStreamingToken";
+
+void setup() {
+  Serial.begin(9600);
+  dht.begin();
+  
+  // Initialize SD card
+  if (!sd.begin(SD_CS_PIN)) {
+    Serial.println("SD card initialization failed!");
+    while (1);
+  }
+
+  // Connect to WiFi
+  WiFi.begin(ssid, pass);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi!");
+
+  // Print local IP address
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  // Read temperature from DHT22 sensor
+  sensors_event_t event;
+  dht.temperature().getEvent(&event);
+  float temperature = event.temperature;
+
+  // Log temperature data to SD card
+  File dataFile = sd.open(fileName, FILE_WRITE);
+  if (dataFile) {
+    dataFile.print(temperature);
+    dataFile.print("\n");
+    dataFile.close();
+  } else {
+    Serial.println("Error opening data file!");
+  }
+
+  // Upload data to Plotly via POST request
+  uploadToPlotly(temperature);
+
+  delay(1000); // Wait for 1 second before taking the next reading
+}
+
+void uploadToPlotly(float temperature) {
+  // Create JSON object
+  StaticJsonDocument<200> json;
+  json["x"] = millis();
+  json["y"] = temperature;
+
+  // Serialize JSON to string
+  String jsonString;
+  serializeJson(json, jsonString);
+
+  // Create the POST request payload
+  String payload = "{\"platform\":\"arduino\",\"version\":\"1.0\",\"args\":[\"" + plotlyToken + "\",\"" + jsonString + "\"],\"kwargs\":{}}";
+
+  // Set up the HTTP client
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, plotlyHost);
+  http.addHeader("Content-Type", "application/json");
+
+  // Send the POST request
+  int httpCode = http.POST(payload);
+
+  // Check for successful HTTP response
+  if (httpCode > 0) {
+    Serial.printf("Data uploaded to Plotly. HTTP Code: %d\n", httpCode);
+    String response = http.getString();
+    Serial.println(response);
+  } else {
+    Serial.println("Failed to upload data to Plotly!");
+  }
+
+  // Close the connection
+  http.end();
+}
